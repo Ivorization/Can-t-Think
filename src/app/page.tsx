@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Share2, Copy, RefreshCcw, Settings, AlertCircle, Smartphone, MousePointer2 } from 'lucide-react';
 
