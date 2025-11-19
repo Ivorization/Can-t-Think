@@ -1,7 +1,35 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { Share2, Copy, RefreshCcw, Settings, AlertCircle, Smartphone, MousePointer2 } from 'lucide-react';
+
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
+type DeviceMotionEventConstructorWithPermission = typeof DeviceMotionEvent & {
+  requestPermission?: () => Promise<'granted' | 'denied'>;
+};
+
+type ShareCapableNavigator = Navigator & {
+  share?: (data?: ShareData) => Promise<void>;
+};
+
+type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger';
+
+type ButtonProps = {
+  onClick?: () => void;
+  children: ReactNode;
+  className?: string;
+  variant?: ButtonVariant;
+};
+
+type ScreenProps = {
+  children: ReactNode;
+  className?: string;
+};
 
 // --- DATA: ANSWERS ---
 const ANSWERS = [
@@ -149,7 +177,7 @@ Trust your own judgment and consult professionals for serious matters.
 
 // --- HOOK: SOUND GENERATOR (Procedural Mechanical Sound) ---
 const useMechanicalSound = () => {
-  const audioContextRef = useRef(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const playProcessingSound = () => {
     try {
@@ -192,19 +220,21 @@ const useMechanicalSound = () => {
 };
 
 // --- HOOK: SHAKE DETECTION ---
-const useShake = (onShake, enabled = true) => {
+const useShake = (onShake: () => void, enabled = true) => {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const lastPos = useRef({ x: 0, y: 0, z: 0 });
   const lastTime = useRef(Date.now());
 
+  const deviceMotionCtor = typeof DeviceMotionEvent !== 'undefined' ? DeviceMotionEvent : null;
+
   // Check if permission is needed (iOS 13+)
-  const requiresPermission = typeof DeviceMotionEvent !== 'undefined' && 
-    typeof DeviceMotionEvent.requestPermission === 'function';
+  const requiresPermission = !!deviceMotionCtor &&
+    typeof (deviceMotionCtor as DeviceMotionEventConstructorWithPermission).requestPermission === 'function';
 
   const requestAccess = async () => {
-    if (!requiresPermission) return true;
+    if (!requiresPermission || !deviceMotionCtor) return true;
     try {
-      const response = await DeviceMotionEvent.requestPermission();
+      const response = await (deviceMotionCtor as DeviceMotionEventConstructorWithPermission).requestPermission?.();
       if (response === 'granted') {
         setPermissionGranted(true);
         return true;
@@ -222,7 +252,7 @@ const useShake = (onShake, enabled = true) => {
     const timeout = 1000;
     let lastShake = 0;
 
-    const handleMotion = (e) => {
+    const handleMotion = (e: DeviceMotionEvent) => {
       const current = e.accelerationIncludingGravity;
       if (!current) return;
 
@@ -231,7 +261,13 @@ const useShake = (onShake, enabled = true) => {
         const diffTime = now - lastTime.current;
         lastTime.current = now;
 
-        const speed = Math.abs(current.x + current.y + current.z - lastPos.current.x - lastPos.current.y - lastPos.current.z) / diffTime * 10000;
+        const currentX = current.x ?? 0;
+        const currentY = current.y ?? 0;
+        const currentZ = current.z ?? 0;
+
+        const speed = Math.abs(
+          currentX + currentY + currentZ - lastPos.current.x - lastPos.current.y - lastPos.current.z
+        ) / diffTime * 10000;
 
         if (speed > threshold) {
           if (now - lastShake > timeout) {
@@ -240,7 +276,7 @@ const useShake = (onShake, enabled = true) => {
           }
         }
 
-        lastPos.current = { x: current.x, y: current.y, z: current.z };
+        lastPos.current = { x: currentX, y: currentY, z: currentZ };
       }
     };
 
@@ -253,9 +289,9 @@ const useShake = (onShake, enabled = true) => {
 
 // --- COMPONENTS ---
 
-const Button = ({ onClick, children, className = "", variant = "primary" }) => {
+const Button = ({ onClick, children, className = "", variant = "primary" }: ButtonProps) => {
   const baseStyle = "px-6 py-3 rounded-full font-semibold tracking-wide transition-all duration-200 active:scale-95 flex items-center justify-center gap-2";
-  const variants = {
+  const variants: Record<ButtonVariant, string> = {
     primary: "bg-white text-black hover:bg-gray-200 shadow-[0_0_15px_rgba(255,255,255,0.3)]",
     outline: "border border-white/30 text-white hover:bg-white/10 hover:border-white/60",
     ghost: "text-gray-400 hover:text-white",
@@ -269,7 +305,7 @@ const Button = ({ onClick, children, className = "", variant = "primary" }) => {
   );
 };
 
-const Screen = ({ children, className = "" }) => (
+const Screen = ({ children, className = "" }: ScreenProps) => (
   <div className={`min-h-screen w-full bg-black text-white flex flex-col items-center justify-center p-6 relative overflow-hidden ${className}`}>
     {children}
   </div>
@@ -282,6 +318,7 @@ export default function App() {
   const [answer, setAnswer] = useState('');
   const [processingText, setProcessingText] = useState('Thinking...');
   const { playProcessingSound } = useMechanicalSound();
+  const canShare = typeof navigator !== 'undefined' && Boolean((navigator as ShareCapableNavigator).share);
 
   // Persistence Check
   useEffect(() => {
@@ -294,7 +331,7 @@ export default function App() {
   }, []);
 
   // Haptics helper
-  const vibrate = (pattern) => {
+  const vibrate = (pattern: number | number[]) => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(pattern);
     }
@@ -343,9 +380,11 @@ export default function App() {
       url: window.location.href
     };
 
-    if (navigator.share) {
+    const shareCapableNavigator = navigator as ShareCapableNavigator;
+
+    if (shareCapableNavigator.share) {
       try {
-        await navigator.share(shareData);
+        await shareCapableNavigator.share(shareData);
       } catch (err) {
         console.log('Share canceled');
       }
@@ -498,8 +537,8 @@ export default function App() {
             </Button>
             
             <Button onClick={handleShare} variant="outline" className="w-full max-w-xs">
-              {navigator.share ? <Share2 size={18} /> : <Copy size={18} />}
-              {navigator.share ? "Share Answer" : "Copy to Clipboard"}
+              {canShare ? <Share2 size={18} /> : <Copy size={18} />}
+              {canShare ? "Share Answer" : "Copy to Clipboard"}
             </Button>
           </div>
 
